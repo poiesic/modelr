@@ -1,0 +1,29 @@
+version: "0.2"
+name: verify-pass
+description: System with generous capacity (verification should pass)
+components:
+  - name: api
+    type: server
+    description: API server
+    properties:
+      max_connections: 10
+      min_instances: 1
+      max_instances: 3
+  - name: db
+    type: datastore
+    description: Primary database
+    properties:
+      max_connections: 10000
+      max_ops_per_sec: 50000
+      conn_establish_ms: 20
+edges:
+  - source: api
+    target: db
+    operation: read_write
+    description: API reads/writes database
+    properties:
+      avg_operation_ms: 10
+relationships:
+  - template: capacity_chain
+    upstream: api
+    downstream: db

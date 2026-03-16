@@ -1,0 +1,71 @@
+version: "0.2"
+name: ws-chat-server
+description: A real-time chat server using WebSocket connections with message persistence
+
+components:
+- name: lb
+  type: server
+  description: Load balancer distributing WebSocket connections across ws-server instances
+  properties:
+    max_connections: 50000
+
+- name: ws-server
+  type: server
+  description: WebSocket server handling client connections and message routing
+  properties:
+    max_connections: 1000
+    min_instances: 1
+    max_instances: 50
+
+- name: redis
+  type: datastore
+  description: Redis instance for pub/sub message fan-out and presence tracking
+  properties:
+    max_connections: 100
+    max_ops_per_sec: 100000
+
+- name: postgres
+  type: datastore
+  description: PostgreSQL database for message persistence and chat history
+  properties:
+    max_connections: 100
+    max_ops_per_sec: 15
+
+edges:
+- source: lb
+  target: ws-server
+  operation: read_write
+  description: Proxy WebSocket connections to backend server instances
+  properties:
+    avg_operation_ms: 100
+
+- source: ws-server
+  target: redis
+  operation: read_write
+  description: Publish messages for fan-out, subscribe to channels, presence updates
+  properties:
+    avg_operation_ms: 10
+    min_pool_size: 1
+    max_pool_size: 2
+
+- source: ws-server
+  target: postgres
+  operation: read_write
+  description: Persist messages, query chat history on reconnect
+  properties:
+    avg_operation_ms: 10
+    min_pool_size: 1
+    max_pool_size: 60
+
+relationships:
+- template: capacity_chain
+  upstream: lb
+  downstream: ws-server
+
+- template: pooled_capacity_chain
+  upstream: ws-server
+  downstream: redis
+
+- template: pooled_capacity_chain
+  upstream: ws-server
+  downstream: postgres

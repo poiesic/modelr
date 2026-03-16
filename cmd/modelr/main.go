@@ -14,6 +14,7 @@ import (
 	"github.com/poiesic/modelr/internal/loader"
 	mcpserver "github.com/poiesic/modelr/internal/mcp"
 	"github.com/poiesic/modelr/internal/model"
+	"github.com/poiesic/modelr/internal/verify"
 	"github.com/poiesic/modelr/internal/viz"
 	"github.com/urfave/cli/v3"
 )
@@ -63,6 +64,21 @@ func buildAppWithEnv(stdout, stderr io.Writer, env envConfig) *cli.Command {
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					return runCheck(cmd, env, stderr)
+				},
+			},
+			{
+				Name:      "verify",
+				Usage:     "Behavioral verification via state exploration",
+				ArgsUsage: "<path>",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "Show definition resolution details"},
+					&cli.FloatFlag{Name: "failure-rate", Value: 0.001, Usage: "Target failure rate"},
+					&cli.FloatFlag{Name: "confidence", Value: 0.99, Usage: "Required confidence level"},
+					&cli.IntFlag{Name: "shrink-budget", Value: 2000, Usage: "Maximum shrink attempts for failure minimization"},
+					&cli.IntFlag{Name: "seed", Value: 0, Usage: "Random seed (0 = random)"},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					return runVerify(cmd, env, stderr)
 				},
 			},
 			{
@@ -304,6 +320,69 @@ func runVisualize(cmd *cli.Command, env envConfig, stderr io.Writer) error {
 	} else {
 		fmt.Fprintln(w, "Install graphviz to also generate SVG (e.g., apt install graphviz)")
 	}
+
+	return nil
+}
+
+func runVerify(cmd *cli.Command, env envConfig, stderr io.Writer) error {
+	path := cmd.Args().First()
+
+	result, err := runPipeline(cmd, env, stderr)
+	if err != nil {
+		return err
+	}
+
+	config := verify.DefaultVerifyConfig()
+	config.TargetFailureRate = cmd.Float("failure-rate")
+	config.Confidence = cmd.Float("confidence")
+	config.ShrinkAttempts = int(cmd.Int("shrink-budget"))
+	config.Seed = int64(cmd.Int("seed"))
+
+	if cmd.Bool("verbose") {
+		config.OnShrinkProgress = func(upstream, downstream string, p verify.ShrinkProgress) {
+			suffix := ""
+			if p.Improved {
+				suffix = " (improved)"
+			}
+			fmt.Fprintf(stderr, "[shrink] %s → %s: phase %s, attempt %d/%d, best: %d bytes, %d steps%s\n",
+				upstream, downstream, p.Phase, p.Attempt, p.MaxAttempts, p.BestLength, p.BestSteps, suffix)
+		}
+	}
+
+	verResult, err := verify.Verify(result.parseResult.Model, result.registry, result.validation, config)
+	if err != nil {
+		return fmt.Errorf("verifying: %w", err)
+	}
+
+	if err := verify.WriteVerifiedYAML(path, result.parseResult.Model.Name, verResult, result.validation); err != nil {
+		return err
+	}
+
+	w := cmd.Root().Writer
+	for _, v := range verResult.Verifications {
+		if v.Result == "pass" {
+			fmt.Fprintf(w, "Accepted %s → %s after %d simulations (0 failures)\n",
+				v.Upstream, v.Downstream, v.Simulations)
+			fmt.Fprintf(w, "Confidence: %.0f%% that failure rate < %.1f%%\n",
+				v.Confidence*100, v.FailureRateBound*100)
+		} else {
+			fmt.Fprintf(w, "Rejected %s → %s after %d simulations (%d failures)\n",
+				v.Upstream, v.Downstream, v.Simulations, v.Failures)
+			fmt.Fprintf(w, "Estimated failure rate: %.1f%%\n",
+				float64(v.Failures)/float64(v.Simulations)*100)
+			if len(v.MinimalFailure) > 0 {
+				fmt.Fprintln(w, "Minimal failure case:")
+				for i, step := range v.MinimalFailure {
+					fmt.Fprintf(w, "  %d. %s(instance=%d) → %v\n", i+1, step.Rule, step.Instance, step.State)
+				}
+				fmt.Fprintf(w, "  Property violated: %s\n", v.ViolatedInvariant)
+			}
+		}
+	}
+
+	fmt.Fprintf(w, "\n%s\n", verResult.Summary)
+	outputPath := verify.VerifiedOutputPath(path)
+	fmt.Fprintf(w, "Wrote %s\n", outputPath)
 
 	return nil
 }

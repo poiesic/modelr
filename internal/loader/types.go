@@ -29,6 +29,7 @@ type RelationshipDef struct {
 	Kind        string            `yaml:"kind"`
 	Name        string            `yaml:"name"`
 	Description string            `yaml:"description"`
+	Pattern     string            `yaml:"pattern,omitempty"`
 	Resolve     map[string]string `yaml:"resolve"`
 	Checks      []CheckDef        `yaml:"checks"`
 	Source      string            `yaml:"-" json:"source,omitempty"`

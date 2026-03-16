@@ -52,8 +52,10 @@ properties:
 kind: relationship
 name: capacity_chain
 description: Upstream concurrency vs downstream capacity
+pattern: finite_resource
 resolve:
   upstream_rate: upstream.max_connections
+  min_instances: upstream.min_instances
   instances: upstream.max_instances
   operation_cost: edge.avg_operation_ms
   downstream_capacity: downstream.max_connections
@@ -66,9 +68,11 @@ checks:
 kind: relationship
 name: pooled_capacity_chain
 description: Pooled connection count and throughput
+pattern: finite_pooled_resource
 resolve:
   min_pool_size: edge.min_pool_size
   max_pool_size: edge.max_pool_size
+  min_instances: upstream.min_instances
   instances: upstream.max_instances
   operation_cost: edge.avg_operation_ms
   downstream_capacity: downstream.max_connections

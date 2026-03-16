@@ -118,6 +118,7 @@ func TestCapacityChainResolveBindings(t *testing.T) {
 
 	expected := map[string]string{
 		"upstream_rate":        "upstream.max_connections",
+		"min_instances":        "upstream.min_instances",
 		"instances":            "upstream.max_instances",
 		"operation_cost":       "edge.avg_operation_ms",
 		"downstream_capacity":  "downstream.max_connections",
@@ -136,6 +137,7 @@ func TestPooledCapacityChainResolveBindings(t *testing.T) {
 	expected := map[string]string{
 		"min_pool_size":       "edge.min_pool_size",
 		"max_pool_size":       "edge.max_pool_size",
+		"min_instances":       "upstream.min_instances",
 		"instances":           "upstream.max_instances",
 		"operation_cost":      "edge.avg_operation_ms",
 		"downstream_capacity": "downstream.max_connections",
@@ -157,6 +159,35 @@ func TestPooledCapacityChainChecks(t *testing.T) {
 	assert.Equal(t, "max_pool_size * instances <= downstream_capacity", pcc.Checks[0].Expression)
 	assert.Equal(t, "throughput", pcc.Checks[1].Name)
 	assert.Equal(t, "max_pool_size * instances * 1000 / operation_cost <= downstream_max_ops", pcc.Checks[1].Expression)
+}
+
+// --- Pattern field tests ---
+
+func TestRelationshipDefPatternField(t *testing.T) {
+	rel := RelationshipDef{Name: "test", Pattern: "finite_resource"}
+	data, err := yaml.Marshal(rel)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "pattern:")
+
+	var restored RelationshipDef
+	require.NoError(t, yaml.Unmarshal(data, &restored))
+	assert.Equal(t, "finite_resource", restored.Pattern)
+}
+
+func TestEmbeddedCapacityChainHasPattern(t *testing.T) {
+	_, rels, err := LoadEmbedded()
+	require.NoError(t, err)
+	cc := findRel(rels, "capacity_chain")
+	require.NotNil(t, cc)
+	assert.Equal(t, "finite_resource", cc.Pattern)
+}
+
+func TestEmbeddedPooledCapacityChainHasPattern(t *testing.T) {
+	_, rels, err := LoadEmbedded()
+	require.NoError(t, err)
+	pcc := findRel(rels, "pooled_capacity_chain")
+	require.NotNil(t, pcc)
+	assert.Equal(t, "finite_pooled_resource", pcc.Pattern)
 }
 
 // --- Registry tests (Step 3.1) ---

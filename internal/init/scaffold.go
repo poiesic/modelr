@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 )
 
-//go:embed skills/model.md
+//go:embed skills/modelr-model/SKILL.md
 var modelSkill string
 
-//go:embed skills/outage-report.md
+//go:embed skills/modelr-outage-report/SKILL.md
 var outageReportSkill string
 
 // ModelSkillContent returns the embedded model skill markdown.
@@ -53,8 +53,8 @@ func Scaffold(targetDir string) (*ScaffoldResult, error) {
 		path    string
 		content string
 	}{
-		{filepath.Join(".claude", "skills", "model.md"), modelSkill},
-		{filepath.Join(".claude", "skills", "outage-report.md"), outageReportSkill},
+		{filepath.Join(".claude", "skills", "modelr-model", "SKILL.md"), modelSkill},
+		{filepath.Join(".claude", "skills", "modelr-outage-report", "SKILL.md"), outageReportSkill},
 		{filepath.Join(".claude", "mcp.json"), MCPConfigContent()},
 	}
 

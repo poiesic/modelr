@@ -191,6 +191,7 @@ A relationship template defines a set of checks between an upstream and downstre
 ```yaml
 name: string
 description: string
+pattern: string              # optional: behavioral verification pattern (see section 8)
 resolve:
   <variable_name>: <scope>.<property_name>
 checks:
@@ -201,11 +202,13 @@ checks:
 
 Scope is one of: `upstream`, `downstream`, `edge`.
 
+The optional `pattern` field declares a behavioral verification pattern for `modelr verify`. Templates without it get arithmetic checks only. See section 8.4 for details.
+
 Relationship templates are loaded via the building block resolution order (see section 7).
 
 ### 4.2 Standard relationship templates
 
-**capacity_chain** — upstream concurrency vs downstream capacity.
+**capacity_chain** — upstream concurrency vs downstream capacity. Pattern: `finite_resource`.
 
 Resolve:
 | Variable | Binding |
@@ -219,7 +222,7 @@ Resolve:
 Checks:
 - `throughput`: `upstream_rate * instances * operation_cost / 1000 <= downstream_capacity * max(downstream_instances, 1)`
 
-**pooled_capacity_chain** — pooled connection count and throughput.
+**pooled_capacity_chain** — pooled connection count and throughput. Pattern: `finite_pooled_resource`.
 
 Resolve:
 | Variable | Binding |
@@ -563,29 +566,111 @@ During validation, if a relationship template's `resolve` bindings reference a p
 
 ### 8.1 Approach
 
-Behavioral verification uses **property-based simulation** with **Wald's sequential probability ratio test (SPRT)** to provide quantified confidence in temporal properties. No external tools are required — the simulation engine is implemented in Go, using goroutines for real concurrency.
+Behavioral verification uses **property-based simulation** with **Wald's sequential probability ratio test (SPRT)** to provide quantified confidence in temporal properties. No external tools are required — the simulation engine is implemented in Go.
 
 The mental model for practitioners: "we simulated your system under random concurrent conditions and here's what we found."
 
-### 8.2 Architecture
+Arithmetic checks (section 4) verify steady-state capacity math. Behavioral verification catches what arithmetic misses: timing-dependent failures, cold-start races, and resource contention under concurrent load.
 
-Each component in the model becomes a **stateful goroutine**. Edges become **channels**. Shared resources (connection pools, downstream capacity) are real bounded resources with real contention. The Go scheduler provides nondeterministic interleaving naturally — no simulated scheduling needed.
+### 8.2 Behavioral patterns
 
-This is a purpose-built engine for composable system model simulation, not a general-purpose property testing library.
+Most concurrency-related failures in system models fall into a small number of categories. Rather than requiring practitioners to write state machines, modelr provides **built-in behavioral patterns** that the simulation engine knows how to execute. A relationship template declares which pattern applies via the `pattern` field; the engine builds the state machine automatically from the template's `resolve` bindings.
 
-### 8.3 How it works
+Relationship templates without a `pattern` field get arithmetic checks only. `modelr verify` skips them.
 
-1. **Model → state machines**: Each component becomes an independent state machine. Shared resources (connection pools) are explicit. Cross-component invariants are defined at the relationship level.
-2. **Generate simulations**: Randomized concurrent operation sequences — random request timing, random operation durations within declared envelopes, random failure injections. Multiple simulated clients run concurrently, producing real nondeterministic interleaving.
-3. **Check invariants**: After each step, invariants are checked. When a violation is found, the failing scenario is recorded.
-4. **Apply SPRT**: After each simulation, evaluate whether there is sufficient evidence to accept (safe), reject (flawed), or continue.
-5. **Shrink failures**: Minimize the failing scenario to a minimal reproduction using bytestream shrinking.
+#### 8.2.1 `finite_resource`
 
-### 8.4 Bytestream-based determinism and shrinking
+Models non-pooled contention for a shared downstream resource. Multiple upstream instances send requests that each consume a unit of downstream capacity for the duration of the operation.
+
+**Roles (mapped from `resolve` bindings):**
+
+| Role | Description | Typical binding |
+|------|-------------|-----------------|
+| `instances` | Number of concurrent upstream actors | `upstream.max_instances` |
+| `resource_capacity` | Downstream resource limit | `downstream.max_connections` |
+| `operation_time` | How long each request holds a resource unit | `edge.avg_operation_ms` |
+
+**State (per instance):** `active_requests`
+
+**Shared state:** `used_resources` (across all instances sharing the same downstream)
+
+**Rules:**
+- `RequestArrives(instance)` — increments `active_requests` and `used_resources`
+- `RequestCompletes(instance)` — guard: `active_requests > 0`; decrements both
+
+**Built-in invariants:**
+- `Conservation` — `used_resources <= resource_capacity`
+
+**How roles are inferred:** The engine maps resolved variables to roles by convention. A variable whose binding ends in `max_instances` maps to `instances`. A variable whose binding ends in `max_connections` or `max_ops_per_sec` maps to `resource_capacity`. A variable whose binding ends in `_ms` and is scoped to `edge` maps to `operation_time`. If the engine cannot infer all required roles, `modelr verify` reports an error for that relationship.
+
+#### 8.2.2 `finite_pooled_resource`
+
+Models pooled contention where each upstream instance maintains a connection pool that grows on demand. Pool growth takes time (connection establishment), creating a window where requests may queue while waiting for a ready connection.
+
+**Roles (mapped from `resolve` bindings):**
+
+| Role | Description | Typical binding |
+|------|-------------|-----------------|
+| `instances` | Number of concurrent upstream actors | `upstream.max_instances` |
+| `pool_capacity` | Max pool size per instance | `edge.max_pool_size` |
+| `resource_capacity` | Downstream resource limit | `downstream.max_connections` |
+| `acquire_time` | Time to establish a new connection | `downstream.conn_establish_ms` |
+| `operation_time` | How long each request holds a connection | `edge.avg_operation_ms` |
+
+**State (per instance):** `pool` (ready connections), `in_flight` (connections being established), `pending` (requests waiting)
+
+**Shared state:** `used_connections` (across all instances sharing the same downstream)
+
+**Rules:**
+- `RequestArrives(instance)` — increments `pending`
+- `StartGrowth(instance)` — guard: `pending > 0` and `pool + in_flight < pool_capacity`; decrements `pending`, increments `in_flight` and `used_connections`
+- `GrowComplete(instance)` — guard: `in_flight > 0`; decrements `in_flight`, increments `pool`
+- `RequestCompletes(instance)` — guard: `pool > 0`; decrements `pool` and `used_connections`
+
+**Built-in invariants:**
+- `Conservation` — `used_connections <= resource_capacity`
+- `PoolBounded` — `pool + in_flight <= pool_capacity` (per instance)
+
+### 8.3 Composition
+
+Relationships are the unit of behavioral simulation. Each relationship with a `pattern` field produces an independent state machine with per-instance state replicated by the upstream's instance count.
+
+Composition happens through **shared state**. When two relationships reference the same downstream component, their shared state variables (e.g., `used_connections`) are unified — both state machines compete for the same resource. The engine infers sharing from the `resolve` bindings: if two relationships both resolve a variable from the same downstream component property, the corresponding shared state is the same counter.
+
+A model with 3 relationships that have patterns produces 3 state machines. If two of them share a downstream, they share a resource counter, and the simulation naturally produces contention between them.
+
+Simulations use the model's actual numbers (50 instances, 50 connections) — no scaling needed.
+
+### 8.4 Pattern field on relationship templates
+
+The `pattern` field is an optional addition to the relationship template format (section 4.1):
+
+```yaml
+name: string
+description: string
+pattern: string              # optional: finite_resource | finite_pooled_resource
+resolve:
+  <variable_name>: <scope>.<property_name>
+checks:
+  - name: string
+    expression: string
+    violation: string
+```
+
+Standard relationship templates with patterns:
+
+| Template | Pattern |
+|----------|---------|
+| `capacity_chain` | `finite_resource` |
+| `pooled_capacity_chain` | `finite_pooled_resource` |
+
+Custom relationship templates loaded via `$MODELR_PATH` can use the same patterns. A template with an unknown `pattern` value produces a warning.
+
+### 8.5 Bytestream-based determinism and shrinking
 
 Inspired by Hypothesis: the entire simulation is deterministic from a single bytestream.
 
-**Generation**: Every test case is produced by deterministically reading from a stream of random bytes. Strategies map bytes to values. Rule selection is driven by bytes. The entire simulation — which rules fire, what arguments they get, how many steps — is determined by one bytestream. A simulation can be replayed exactly by replaying its bytestream.
+**Generation**: Every test case is produced by deterministically reading from a stream of random bytes. Rule selection is driven by bytes. Instance selection is driven by bytes. The entire simulation — which rules fire, which instance they target, how many steps — is determined by one bytestream. A simulation can be replayed exactly by replaying its bytestream.
 
 **Shrinking**: When a violation is found, the shrinker operates on the bytestream, not on domain concepts. Shrinking operations are simple and type-agnostic:
 
@@ -594,35 +679,11 @@ Inspired by Hypothesis: the entire simulation is deterministic from a single byt
 - **Reduce individual bytes** — binary search toward zero
 - **Swap chunks** — move larger values later for lexicographic ordering
 
-If a shrunk bytestream produces a simulation that doesn't fail, it's discarded. The strategies and preconditions guarantee that any bytestream produces a valid (if different) test case. The shrinker doesn't need to understand what the bytes mean.
+If a shrunk bytestream produces a simulation that doesn't fail, it's discarded. Any bytestream produces a valid (if different) test case. The shrinker doesn't need to understand what the bytes mean.
 
 This gives practitioners a **minimal failure case** — the shortest event sequence that reproduces the violation.
 
-### 8.5 Composition
-
-Each component model is an independent state machine. Shared resources (connection pools, downstream capacity) are explicit. The simulation runner generates concurrent operation sequences across all machines simultaneously, checking cross-machine invariants.
-
-This is a fundamental design choice: composition is built in from the start, not bolted on. A model with 5 components produces 5 concurrent state machines with shared resources and global invariant checking.
-
-### 8.6 State machines
-
-A state machine is derived from a relationship and the resolved model properties. For the pool growth case:
-
-**State:** per-instance pool size, in-flight connection establishments, free downstream connections, pending request count
-
-**Rules (selected randomly from bytestream, guarded by preconditions):**
-- `RequestArrives(instance)` — a request arrives needing a connection
-- `StartGrowth(instance)` — instance begins establishing a new connection
-- `GrowComplete(instance)` — connection establishment finishes
-- `RequestCompletes(instance)` — request finishes, returns connection
-
-**Invariants (checked after each step):**
-- `PoolAdequacy` — pending requests never exceed available pool connections
-- `Conservation` — total established connections never exceed downstream max
-
-Simulations use the model's actual numbers (50 instances, 50 connections) — no scaling needed.
-
-### 8.7 SPRT integration
+### 8.6 SPRT integration
 
 Wald's sequential probability ratio test determines how many simulations to run. Rather than a fixed count, it adapts based on observed evidence:
 
@@ -637,14 +698,14 @@ This gives:
 - **Rigorous confidence** — error bounds are mathematically guaranteed
 - **No arbitrary sample size** — the evidence determines when to stop
 
-### 8.8 Defaults and flags
+### 8.7 Defaults and flags
 
 | Parameter | Default | Flag | Description |
 |-----------|---------|------|-------------|
 | Target failure rate | 0.1% | `--failure-rate` | Maximum acceptable failure probability |
 | Confidence level | 99% | `--confidence` | Required confidence in the result |
 
-### 8.9 Output
+### 8.8 Output
 
 **Pass:**
 ```
@@ -658,7 +719,7 @@ Rejected after 23 simulations (4 failures)
 Estimated failure rate: 17.4%
 Minimal failure case:
   1. RequestArrives(instance=3)  → pending=1, pool=0
-  Property violated: PoolAdequacy (pending=1 > pool=0)
+  Property violated: Conservation (used_connections=51 > downstream_capacity=50)
 ```
 
 The `.verified.yaml` output includes:
@@ -667,6 +728,7 @@ The `.verified.yaml` output includes:
 verifications:
   - upstream: ws-server
     downstream: postgres
+    pattern: finite_pooled_resource
     result: pass
     simulations: 312
     failures: 0
@@ -678,17 +740,20 @@ verifications:
         source: datastore type schema
 ```
 
-### 8.10 Relationship to arithmetic checks
+### 8.9 Relationship to arithmetic checks
 
-The three verification approaches are complementary:
+Arithmetic checks and behavioral verification are complementary:
 
 | Approach | What it catches | Speed | Guarantee |
 |----------|----------------|-------|-----------|
 | **Arithmetic checks** (section 4) | Static capacity oversubscription | Milliseconds, deterministic | Exact for steady-state |
-| **Property-based simulation** | Timing-dependent failures, cold-start races, cascade patterns under concurrent load | Seconds, statistical | Confidence bounds via SPRT |
-| **TLA+ / state exploration** (optional, external) | Structural deadlocks, mathematically impossible configurations | Seconds-minutes, exhaustive | Mathematical proof |
+| **Behavioral verification** | Timing-dependent failures, cold-start races, resource contention under concurrent load | Seconds, statistical | Confidence bounds via SPRT |
 
-Arithmetic is the fast first pass. Simulation is the practical middle ground that scales to complex models. TLA+ remains available as an optional external tool for users who want exhaustive proof.
+Arithmetic is the fast first pass. Behavioral verification catches concurrency dynamics that arithmetic cannot express — situations where the steady-state math works but transient states under realistic interleaving cause failures.
+
+### 8.10 Future extensions
+
+Custom invariants on behavioral patterns are a planned extension. This would allow practitioners to express constraints like SLA bounds (`no_request_waits_longer_than: 100ms`) or queue depth limits on top of the built-in pattern state, without defining custom state machines.
 
 ---
 

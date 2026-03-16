@@ -698,10 +698,10 @@ func TestInitCommandCreatesFiles(t *testing.T) {
 	stdout, _, err := runApp(t, "init")
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "created")
-	assert.Contains(t, stdout, "model.md")
+	assert.Contains(t, stdout, "SKILL.md")
 	assert.Contains(t, stdout, "mcp.json")
 
-	_, statErr := os.Stat(filepath.Join(dir, ".claude", "skills", "model.md"))
+	_, statErr := os.Stat(filepath.Join(dir, ".claude", "skills", "modelr-model", "SKILL.md"))
 	assert.NoError(t, statErr)
 	_, statErr = os.Stat(filepath.Join(dir, ".claude", "mcp.json"))
 	assert.NoError(t, statErr)
@@ -732,8 +732,8 @@ func TestInitCommandOutput(t *testing.T) {
 
 	stdout, _, err := runApp(t, "init")
 	require.NoError(t, err)
-	assert.Contains(t, stdout, "model.md")
-	assert.Contains(t, stdout, "outage-report.md")
+	assert.Contains(t, stdout, "modelr-model")
+	assert.Contains(t, stdout, "modelr-outage-report")
 	assert.Contains(t, stdout, "mcp.json")
 	assert.Contains(t, stdout, "initialized")
 }
@@ -749,7 +749,7 @@ func TestEndToEndInitCreatesValidSkills(t *testing.T) {
 	_, _, err := runApp(t, "init")
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, ".claude", "skills", "model.md"))
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "skills", "modelr-model", "SKILL.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "list_definitions")
 	assert.Contains(t, string(data), "check_model")
@@ -768,4 +768,98 @@ func TestEndToEndInitMCPConfig(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "modelr")
 	assert.Contains(t, string(data), "mcp")
+}
+
+// --- Verify command ---
+
+func TestVerifyCommandPassingModel(t *testing.T) {
+	outputPath := "testdata/verify-pass.verified.yaml"
+	defer os.Remove(outputPath)
+
+	stdout, _, err := runApp(t, "verify", "testdata/verify-pass.model.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Accepted")
+
+	_, statErr := os.Stat(outputPath)
+	assert.NoError(t, statErr)
+}
+
+func TestVerifyCommandFailingModel(t *testing.T) {
+	outputPath := "testdata/verify-fail.verified.yaml"
+	defer os.Remove(outputPath)
+
+	stdout, _, err := runApp(t, "verify", "testdata/verify-fail.model.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Rejected")
+
+	_, statErr := os.Stat(outputPath)
+	assert.NoError(t, statErr)
+}
+
+func TestVerifyCommandNoPatterns(t *testing.T) {
+	// Use a model with no relationships at all
+	dir := t.TempDir()
+	modelPath := filepath.Join(dir, "test.model.yaml")
+	os.WriteFile(modelPath, []byte(`
+version: "0.2"
+name: no-patterns
+description: No relationships
+components:
+  - name: api
+    type: server
+    description: API
+edges: []
+`), 0644)
+
+	stdout, _, err := runAppWithEnv(t, envConfig{homeDir: t.TempDir()}, "verify", modelPath)
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "No behavioral patterns")
+}
+
+func TestVerifyCommandFlags(t *testing.T) {
+	outputPath := "testdata/verify-pass.verified.yaml"
+	defer os.Remove(outputPath)
+
+	stdout, _, err := runApp(t, "verify", "--failure-rate", "0.01", "--confidence", "0.95", "testdata/verify-pass.model.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Accepted")
+}
+
+func TestVerifyCommandVerbose(t *testing.T) {
+	outputPath := "testdata/verify-pass.verified.yaml"
+	defer os.Remove(outputPath)
+
+	stdout, _, err := runApp(t, "verify", "--verbose", "testdata/verify-pass.model.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Loading definitions")
+}
+
+func TestVerifyVerboseShrinkOutput(t *testing.T) {
+	outputPath := "testdata/verify-fail.verified.yaml"
+	defer os.Remove(outputPath)
+
+	_, stderr, err := runApp(t, "verify", "--verbose", "testdata/verify-fail.model.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "[shrink]")
+	assert.Contains(t, stderr, "delete_chunks")
+}
+
+// --- End-to-end: check then verify ---
+
+func TestEndToEndCheckThenVerify(t *testing.T) {
+	checkedPath := "testdata/verify-pass.checked.yaml"
+	verifiedPath := "testdata/verify-pass.verified.yaml"
+	defer os.Remove(checkedPath)
+	defer os.Remove(verifiedPath)
+
+	_, _, err := runApp(t, "check", "testdata/verify-pass.model.yaml")
+	require.NoError(t, err)
+
+	_, _, err = runApp(t, "verify", "testdata/verify-pass.model.yaml")
+	require.NoError(t, err)
+
+	_, err = os.Stat(checkedPath)
+	assert.NoError(t, err)
+	_, err = os.Stat(verifiedPath)
+	assert.NoError(t, err)
 }

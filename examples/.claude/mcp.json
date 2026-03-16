@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "modelr": {
+      "args": [
+        "mcp"
+      ],
+      "command": "modelr"
+    }
+  }
+}

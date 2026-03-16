@@ -11,6 +11,7 @@ import (
 	"github.com/poiesic/modelr/internal/check"
 	"github.com/poiesic/modelr/internal/loader"
 	"github.com/poiesic/modelr/internal/model"
+	"github.com/poiesic/modelr/internal/verify"
 	"github.com/poiesic/modelr/internal/viz"
 )
 
@@ -76,7 +77,7 @@ func NewServer(env EnvConfig) *server.MCPServer {
 				mcp.Description("Absolute path to the .model.yaml file"),
 			),
 		),
-		verifyModelHandler(),
+		verifyModelHandler(env),
 	)
 
 	return s
@@ -274,9 +275,45 @@ func visualizeModelHandler(env EnvConfig) server.ToolHandlerFunc {
 	}
 }
 
-func verifyModelHandler() server.ToolHandlerFunc {
+func verifyModelHandler(env EnvConfig) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText("Behavioral verification is not yet implemented."), nil
+		path, err := request.RequireString("path")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		parseResult, registry, validation, err := runModelPipeline(env, path)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		config := verify.DefaultVerifyConfig()
+		verResult, err := verify.Verify(parseResult.Model, registry, validation, config)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		if err := verify.WriteVerifiedYAML(path, parseResult.Model.Name, verResult, validation); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		var b strings.Builder
+		for _, v := range verResult.Verifications {
+			if v.Result == "pass" {
+				b.WriteString(fmt.Sprintf("Accepted %s → %s after %d simulations (0 failures)\n",
+					v.Upstream, v.Downstream, v.Simulations))
+			} else {
+				b.WriteString(fmt.Sprintf("Rejected %s → %s after %d simulations (%d failures)\n",
+					v.Upstream, v.Downstream, v.Simulations, v.Failures))
+				if v.ViolatedInvariant != "" {
+					b.WriteString(fmt.Sprintf("  Violated: %s\n", v.ViolatedInvariant))
+				}
+			}
+		}
+		b.WriteString(fmt.Sprintf("\n%s\n", verResult.Summary))
+		b.WriteString(fmt.Sprintf("Wrote %s\n", verify.VerifiedOutputPath(path)))
+
+		return mcp.NewToolResultText(b.String()), nil
 	}
 }
 

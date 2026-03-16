@@ -55,9 +55,9 @@ func TestScaffoldCreatesFiles(t *testing.T) {
 	assert.Empty(t, result.Skipped)
 
 	// All files exist
-	_, err = os.Stat(filepath.Join(dir, ".claude", "skills", "model.md"))
+	_, err = os.Stat(filepath.Join(dir, ".claude", "skills", "modelr-model", "SKILL.md"))
 	assert.NoError(t, err)
-	_, err = os.Stat(filepath.Join(dir, ".claude", "skills", "outage-report.md"))
+	_, err = os.Stat(filepath.Join(dir, ".claude", "skills", "modelr-outage-report", "SKILL.md"))
 	assert.NoError(t, err)
 	_, err = os.Stat(filepath.Join(dir, ".claude", "mcp.json"))
 	assert.NoError(t, err)
@@ -77,19 +77,19 @@ func TestScaffoldSkipsExistingFile(t *testing.T) {
 	dir := t.TempDir()
 
 	// Pre-create one file
-	skillDir := filepath.Join(dir, ".claude", "skills")
+	skillDir := filepath.Join(dir, ".claude", "skills", "modelr-model")
 	os.MkdirAll(skillDir, 0755)
-	os.WriteFile(filepath.Join(skillDir, "model.md"), []byte("existing content"), 0644)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("existing content"), 0644)
 
 	result, err := Scaffold(dir)
 	require.NoError(t, err)
 
 	assert.Len(t, result.Skipped, 1)
-	assert.Contains(t, result.Skipped[0], "model.md")
+	assert.Contains(t, result.Skipped[0], "SKILL.md")
 	assert.Len(t, result.Created, 2)
 
 	// Existing file not overwritten
-	data, _ := os.ReadFile(filepath.Join(skillDir, "model.md"))
+	data, _ := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
 	assert.Equal(t, "existing content", string(data))
 }
 
@@ -115,9 +115,9 @@ func TestScaffoldSkipsExistingMCPConfig(t *testing.T) {
 func TestScaffoldPartialExisting(t *testing.T) {
 	dir := t.TempDir()
 
-	skillDir := filepath.Join(dir, ".claude", "skills")
+	skillDir := filepath.Join(dir, ".claude", "skills", "modelr-model")
 	os.MkdirAll(skillDir, 0755)
-	os.WriteFile(filepath.Join(skillDir, "model.md"), []byte("existing"), 0644)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("existing"), 0644)
 
 	result, err := Scaffold(dir)
 	require.NoError(t, err)

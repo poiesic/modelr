@@ -221,12 +221,35 @@ func TestVisualizeModelWritesFile(t *testing.T) {
 	assert.NoError(t, statErr)
 }
 
-// --- verify_model stub ---
+// --- verify_model ---
 
-func TestVerifyModelStub(t *testing.T) {
+func TestVerifyModelPassing(t *testing.T) {
+	dir := t.TempDir()
+	modelPath := writeModel(t, dir, "test.model.yaml", cleanModel)
+
 	tc := newTestClient(t, testEnv(t))
-	text := tc.callTool("verify_model", map[string]any{"path": "/any/path"})
-	assert.Contains(t, text, "not yet implemented")
+	text := tc.callTool("verify_model", map[string]any{"path": modelPath})
+	assert.Contains(t, text, "Accepted")
+}
+
+func TestVerifyModelFailing(t *testing.T) {
+	dir := t.TempDir()
+	modelPath := writeModel(t, dir, "test.model.yaml", violationModel)
+
+	tc := newTestClient(t, testEnv(t))
+	text := tc.callTool("verify_model", map[string]any{"path": modelPath})
+	assert.Contains(t, text, "Rejected")
+}
+
+func TestVerifyModelWritesFile(t *testing.T) {
+	dir := t.TempDir()
+	modelPath := writeModel(t, dir, "test.model.yaml", cleanModel)
+
+	tc := newTestClient(t, testEnv(t))
+	tc.callTool("verify_model", map[string]any{"path": modelPath})
+
+	_, statErr := os.Stat(filepath.Join(dir, "test.verified.yaml"))
+	assert.NoError(t, statErr)
 }
 
 // --- Integration ---
