@@ -1,0 +1,4 @@
+version: "0.2"
+name: invalid
+description: Missing components field
+edges: []

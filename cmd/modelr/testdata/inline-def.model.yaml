@@ -1,0 +1,30 @@
+---
+kind: node
+name: server
+description: Custom server with max_rps
+properties:
+  max_rps:
+    type: number
+    unit: req/s
+    description: Max requests per second
+  min_instances:
+    type: number
+    unit: instances
+    description: Minimum instances
+    default: 1
+  max_instances:
+    type: number
+    unit: instances
+    description: Maximum instances
+    default: 1
+---
+version: "0.2"
+name: inline-def-system
+description: A system using inline definitions
+components:
+  - name: api
+    type: server
+    description: API server
+    properties:
+      max_rps: 5000
+edges: []

@@ -1,0 +1,83 @@
+---
+kind: node
+name: server
+description: A server process that handles requests
+properties:
+  max_connections:
+    type: number
+    unit: connections
+    description: Maximum concurrent connections
+  min_instances:
+    type: number
+    unit: instances
+    description: Minimum number of server instances
+    default: 1
+  max_instances:
+    type: number
+    unit: instances
+    description: Maximum number of server instances
+    default: 1
+---
+kind: node
+name: datastore
+description: A persistent data store
+properties:
+  max_connections:
+    type: number
+    unit: connections
+    description: Maximum concurrent connections
+  max_ops_per_sec:
+    type: number
+    unit: ops/s
+    description: Maximum operations per second
+  conn_establish_ms:
+    type: number
+    unit: ms
+    description: Time to establish a new connection (TCP + TLS + auth)
+    default: 20
+---
+kind: node
+name: queue
+description: A message queue
+properties:
+  max_depth:
+    type: number
+    unit: messages
+    description: Maximum queue depth before backpressure
+  max_throughput:
+    type: number
+    unit: msg/s
+    description: Maximum messages per second
+---
+kind: relationship
+name: capacity_chain
+description: Upstream concurrency vs downstream capacity
+resolve:
+  upstream_rate: upstream.max_connections
+  instances: upstream.max_instances
+  operation_cost: edge.avg_operation_ms
+  downstream_capacity: downstream.max_connections
+  downstream_instances: downstream.max_instances
+checks:
+  - name: throughput
+    expression: "upstream_rate * instances * operation_cost / 1000 <= downstream_capacity * max(downstream_instances, 1)"
+    violation: "Upstream throughput may exceed downstream capacity"
+---
+kind: relationship
+name: pooled_capacity_chain
+description: Pooled connection count and throughput
+resolve:
+  min_pool_size: edge.min_pool_size
+  max_pool_size: edge.max_pool_size
+  instances: upstream.max_instances
+  operation_cost: edge.avg_operation_ms
+  downstream_capacity: downstream.max_connections
+  downstream_max_ops: downstream.max_ops_per_sec
+  conn_establish_ms: downstream.conn_establish_ms
+checks:
+  - name: connection_limit
+    expression: "max_pool_size * instances <= downstream_capacity"
+    violation: "Connection exhaustion"
+  - name: throughput
+    expression: "max_pool_size * instances * 1000 / operation_cost <= downstream_max_ops"
+    violation: "Throughput exceeds downstream capacity"

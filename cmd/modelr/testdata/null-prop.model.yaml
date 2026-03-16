@@ -1,0 +1,25 @@
+version: "0.2"
+name: null-prop-system
+description: A system with missing properties causing indeterminate results
+components:
+  - name: api
+    type: server
+    description: API server
+    properties:
+      max_instances: 2
+  - name: db
+    type: datastore
+    description: Primary database
+    properties:
+      max_connections: 100
+edges:
+  - source: api
+    target: db
+    operation: read_write
+    description: API reads/writes database
+    properties:
+      avg_operation_ms: 10
+relationships:
+  - template: capacity_chain
+    upstream: api
+    downstream: db

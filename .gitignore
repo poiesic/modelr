@@ -1,0 +1,16 @@
+# Build artifacts
+bin/
+
+# Test output
+*.checked.yaml
+*.verified.yaml
+*.dot
+*.svg
+
+# Tool state
+.modelr/
+
+# Go
+*.exe
+*.test
+*.out

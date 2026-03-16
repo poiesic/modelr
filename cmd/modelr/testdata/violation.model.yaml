@@ -1,0 +1,29 @@
+version: "0.2"
+name: oversubscribed-system
+description: A system with oversubscribed connections
+components:
+  - name: api
+    type: server
+    description: API server
+    properties:
+      max_connections: 1000
+      min_instances: 1
+      max_instances: 50
+  - name: db
+    type: datastore
+    description: Primary database
+    properties:
+      max_connections: 100
+      max_ops_per_sec: 500
+      conn_establish_ms: 20
+edges:
+  - source: api
+    target: db
+    operation: read_write
+    description: API reads/writes database
+    properties:
+      avg_operation_ms: 100
+relationships:
+  - template: capacity_chain
+    upstream: api
+    downstream: db
