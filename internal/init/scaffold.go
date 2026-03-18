@@ -14,6 +14,9 @@ var modelSkill string
 //go:embed skills/modelr-outage-report/SKILL.md
 var outageReportSkill string
 
+//go:embed skills/modelr-verify/SKILL.md
+var verifySkill string
+
 // ModelSkillContent returns the embedded model skill markdown.
 func ModelSkillContent() string {
 	return modelSkill
@@ -22,6 +25,11 @@ func ModelSkillContent() string {
 // OutageReportSkillContent returns the embedded outage report skill markdown.
 func OutageReportSkillContent() string {
 	return outageReportSkill
+}
+
+// VerifySkillContent returns the embedded verify skill markdown.
+func VerifySkillContent() string {
+	return verifySkill
 }
 
 // MCPConfigContent returns the .claude/mcp.json content for modelr.
@@ -55,6 +63,7 @@ func Scaffold(targetDir string) (*ScaffoldResult, error) {
 	}{
 		{filepath.Join(".claude", "skills", "modelr-model", "SKILL.md"), modelSkill},
 		{filepath.Join(".claude", "skills", "modelr-outage-report", "SKILL.md"), outageReportSkill},
+		{filepath.Join(".claude", "skills", "modelr-verify", "SKILL.md"), verifySkill},
 		{filepath.Join(".claude", "mcp.json"), MCPConfigContent()},
 	}
 

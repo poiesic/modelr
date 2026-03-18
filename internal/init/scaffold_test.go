@@ -26,6 +26,16 @@ func TestOutageReportSkillContent(t *testing.T) {
 	assert.Contains(t, content, "Incident:")
 	assert.Contains(t, content, "Severity")
 	assert.Contains(t, content, "Timeline")
+	assert.Contains(t, content, "verified.yaml")
+	assert.Contains(t, content, "verify_model")
+}
+
+func TestVerifySkillContent(t *testing.T) {
+	content := VerifySkillContent()
+	assert.Contains(t, content, "verify_model")
+	assert.Contains(t, content, "failure-rate")
+	assert.Contains(t, content, "SPRT")
+	assert.Contains(t, content, "minimal failure")
 }
 
 // --- Step 4.2: MCP config ---
@@ -51,13 +61,15 @@ func TestScaffoldCreatesFiles(t *testing.T) {
 	result, err := Scaffold(dir)
 	require.NoError(t, err)
 
-	assert.Len(t, result.Created, 3)
+	assert.Len(t, result.Created, 4)
 	assert.Empty(t, result.Skipped)
 
 	// All files exist
 	_, err = os.Stat(filepath.Join(dir, ".claude", "skills", "modelr-model", "SKILL.md"))
 	assert.NoError(t, err)
 	_, err = os.Stat(filepath.Join(dir, ".claude", "skills", "modelr-outage-report", "SKILL.md"))
+	assert.NoError(t, err)
+	_, err = os.Stat(filepath.Join(dir, ".claude", "skills", "modelr-verify", "SKILL.md"))
 	assert.NoError(t, err)
 	_, err = os.Stat(filepath.Join(dir, ".claude", "mcp.json"))
 	assert.NoError(t, err)
@@ -86,7 +98,7 @@ func TestScaffoldSkipsExistingFile(t *testing.T) {
 
 	assert.Len(t, result.Skipped, 1)
 	assert.Contains(t, result.Skipped[0], "SKILL.md")
-	assert.Len(t, result.Created, 2)
+	assert.Len(t, result.Created, 3)
 
 	// Existing file not overwritten
 	data, _ := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
@@ -123,7 +135,7 @@ func TestScaffoldPartialExisting(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Len(t, result.Skipped, 1)
-	assert.Len(t, result.Created, 2)
+	assert.Len(t, result.Created, 3)
 }
 
 func TestScaffoldAllExist(t *testing.T) {
@@ -138,5 +150,5 @@ func TestScaffoldAllExist(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Empty(t, result.Created)
-	assert.Len(t, result.Skipped, 3)
+	assert.Len(t, result.Skipped, 4)
 }

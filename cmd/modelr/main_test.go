@@ -359,7 +359,7 @@ properties: {}
 
 	_, stderr, err := runAppWithEnv(t, env, "cache", "refresh")
 	require.NoError(t, err)
-	assert.Contains(t, stderr, "info:")
+	assert.Contains(t, stderr, "INF")
 	assert.Contains(t, stderr, "server")
 	assert.Contains(t, stderr, "shadowed")
 }
@@ -498,7 +498,8 @@ properties: {}
 
 	_, stderr, err := runAppWithEnv(t, env, "validate", "testdata/clean.model.yaml")
 	require.NoError(t, err)
-	assert.Contains(t, stderr, "warning: definition cache is stale")
+	assert.Contains(t, stderr, "WRN")
+	assert.Contains(t, stderr, "definition cache is stale")
 }
 
 func TestPipelineNoCacheNoPath(t *testing.T) {
@@ -734,6 +735,7 @@ func TestInitCommandOutput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "modelr-model")
 	assert.Contains(t, stdout, "modelr-outage-report")
+	assert.Contains(t, stdout, "modelr-verify")
 	assert.Contains(t, stdout, "mcp.json")
 	assert.Contains(t, stdout, "initialized")
 }
@@ -840,7 +842,8 @@ func TestVerifyVerboseShrinkOutput(t *testing.T) {
 
 	_, stderr, err := runApp(t, "verify", "--verbose", "testdata/verify-fail.model.yaml")
 	require.NoError(t, err)
-	assert.Contains(t, stderr, "[shrink]")
+	assert.Contains(t, stderr, "INF")
+	assert.Contains(t, stderr, "shrink progress")
 	assert.Contains(t, stderr, "delete_chunks")
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/poiesic/modelr/internal/check"
 	modelrinit "github.com/poiesic/modelr/internal/init"
 	"github.com/poiesic/modelr/internal/loader"
+	"github.com/poiesic/modelr/internal/logging"
 	mcpserver "github.com/poiesic/modelr/internal/mcp"
 	"github.com/poiesic/modelr/internal/model"
 	"github.com/poiesic/modelr/internal/verify"
@@ -36,7 +38,12 @@ func buildApp(stdout, stderr io.Writer) *cli.Command {
 	return buildAppWithEnv(stdout, stderr, envFromOS())
 }
 
+func newLogger(w io.Writer) *slog.Logger {
+	return slog.New(logging.NewTermHandler(w, slog.LevelInfo))
+}
+
 func buildAppWithEnv(stdout, stderr io.Writer, env envConfig) *cli.Command {
+	log := newLogger(stderr)
 	return &cli.Command{
 		Name:      "modelr",
 		Usage:     "Composable system modeling with explicit uncertainty",
@@ -52,7 +59,7 @@ func buildAppWithEnv(stdout, stderr io.Writer, env envConfig) *cli.Command {
 					&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "Show definition resolution details"},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runValidate(cmd, env, stderr)
+					return runValidate(cmd, env, log)
 				},
 			},
 			{
@@ -63,7 +70,7 @@ func buildAppWithEnv(stdout, stderr io.Writer, env envConfig) *cli.Command {
 					&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "Show definition resolution details"},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runCheck(cmd, env, stderr)
+					return runCheck(cmd, env, log)
 				},
 			},
 			{
@@ -78,7 +85,7 @@ func buildAppWithEnv(stdout, stderr io.Writer, env envConfig) *cli.Command {
 					&cli.IntFlag{Name: "seed", Value: 0, Usage: "Random seed (0 = random)"},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runVerify(cmd, env, stderr)
+					return runVerify(cmd, env, log)
 				},
 			},
 			{
@@ -89,7 +96,7 @@ func buildAppWithEnv(stdout, stderr io.Writer, env envConfig) *cli.Command {
 					&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "Show definition resolution details"},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runVisualize(cmd, env, stderr)
+					return runVisualize(cmd, env, log)
 				},
 			},
 			{
@@ -104,7 +111,7 @@ func buildAppWithEnv(stdout, stderr io.Writer, env envConfig) *cli.Command {
 							&cli.BoolFlag{Name: "auto", Usage: "Only rebuild if stale"},
 						},
 						Action: func(ctx context.Context, cmd *cli.Command) error {
-							return runCacheRefresh(cmd, env, stderr)
+							return runCacheRefresh(cmd, env, log)
 						},
 					},
 					{
@@ -123,7 +130,7 @@ func buildAppWithEnv(stdout, stderr io.Writer, env envConfig) *cli.Command {
 					&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "Show property details"},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return runDefinitions(cmd, env, stderr)
+					return runDefinitions(cmd, env, log)
 				},
 			},
 			{
@@ -154,7 +161,7 @@ type pipelineResult struct {
 	validation  *model.ValidationResult
 }
 
-func loadPathDefs(env envConfig, stderr io.Writer) ([]loader.NodeDef, []loader.RelationshipDef, error) {
+func loadPathDefs(env envConfig, log *slog.Logger) ([]loader.NodeDef, []loader.RelationshipDef, error) {
 	if env.modelrPath == "" {
 		return nil, nil, nil
 	}
@@ -171,7 +178,7 @@ func loadPathDefs(env envConfig, stderr io.Writer) ([]loader.NodeDef, []loader.R
 			return nil, nil, err
 		}
 		for _, s := range shadows {
-			fmt.Fprintf(stderr, "info: %s/%s shadowed (%s → %s)\n", s.Kind, s.Name, s.Shadowed, s.Winner)
+			log.Info("definition shadowed", "def", s.Kind+"/"+s.Name, "from", s.Shadowed, "to", s.Winner)
 		}
 		if err := loader.WriteCache(newCache, env.homeDir); err != nil {
 			return nil, nil, err
@@ -185,13 +192,13 @@ func loadPathDefs(env envConfig, stderr io.Writer) ([]loader.NodeDef, []loader.R
 		return nil, nil, err
 	}
 	if staleness.Stale {
-		fmt.Fprintf(stderr, "warning: definition cache is stale (run 'modelr cache refresh' to update)\n")
+		log.Warn("definition cache is stale, run 'modelr cache refresh' to update")
 	}
 
 	return loader.DefsFromCache(cache)
 }
 
-func runPipeline(cmd *cli.Command, env envConfig, stderr io.Writer) (*pipelineResult, error) {
+func runPipeline(cmd *cli.Command, env envConfig, log *slog.Logger) (*pipelineResult, error) {
 	path := cmd.Args().First()
 	if path == "" {
 		return nil, fmt.Errorf("path argument is required")
@@ -208,7 +215,7 @@ func runPipeline(cmd *cli.Command, env envConfig, stderr io.Writer) (*pipelineRe
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 
-	pathNodes, pathRels, err := loadPathDefs(env, stderr)
+	pathNodes, pathRels, err := loadPathDefs(env, log)
 	if err != nil {
 		return nil, fmt.Errorf("loading path definitions: %w", err)
 	}
@@ -239,8 +246,8 @@ func runPipeline(cmd *cli.Command, env envConfig, stderr io.Writer) (*pipelineRe
 	}, nil
 }
 
-func runValidate(cmd *cli.Command, env envConfig, stderr io.Writer) error {
-	result, err := runPipeline(cmd, env, stderr)
+func runValidate(cmd *cli.Command, env envConfig, log *slog.Logger) error {
+	result, err := runPipeline(cmd, env, log)
 	if err != nil {
 		return err
 	}
@@ -250,10 +257,10 @@ func runValidate(cmd *cli.Command, env envConfig, stderr io.Writer) error {
 	return nil
 }
 
-func runCheck(cmd *cli.Command, env envConfig, stderr io.Writer) error {
+func runCheck(cmd *cli.Command, env envConfig, log *slog.Logger) error {
 	path := cmd.Args().First()
 
-	result, err := runPipeline(cmd, env, stderr)
+	result, err := runPipeline(cmd, env, log)
 	if err != nil {
 		return err
 	}
@@ -277,10 +284,10 @@ func runCheck(cmd *cli.Command, env envConfig, stderr io.Writer) error {
 	return nil
 }
 
-func runVisualize(cmd *cli.Command, env envConfig, stderr io.Writer) error {
+func runVisualize(cmd *cli.Command, env envConfig, log *slog.Logger) error {
 	path := cmd.Args().First()
 
-	result, err := runPipeline(cmd, env, stderr)
+	result, err := runPipeline(cmd, env, log)
 	if err != nil {
 		return err
 	}
@@ -309,7 +316,7 @@ func runVisualize(cmd *cli.Command, env envConfig, stderr io.Writer) error {
 	if viz.GraphvizAvailable() {
 		svgBytes, err := viz.RenderDOT(dotContent, "svg")
 		if err != nil {
-			fmt.Fprintf(stderr, "warning: SVG rendering failed: %v\n", err)
+			log.Warn("SVG rendering failed", "err", err)
 		} else {
 			svgPath := svgOutputPath(path)
 			if err := os.WriteFile(svgPath, svgBytes, 0644); err != nil {
@@ -324,10 +331,10 @@ func runVisualize(cmd *cli.Command, env envConfig, stderr io.Writer) error {
 	return nil
 }
 
-func runVerify(cmd *cli.Command, env envConfig, stderr io.Writer) error {
+func runVerify(cmd *cli.Command, env envConfig, log *slog.Logger) error {
 	path := cmd.Args().First()
 
-	result, err := runPipeline(cmd, env, stderr)
+	result, err := runPipeline(cmd, env, log)
 	if err != nil {
 		return err
 	}
@@ -340,12 +347,15 @@ func runVerify(cmd *cli.Command, env envConfig, stderr io.Writer) error {
 
 	if cmd.Bool("verbose") {
 		config.OnShrinkProgress = func(upstream, downstream string, p verify.ShrinkProgress) {
-			suffix := ""
-			if p.Improved {
-				suffix = " (improved)"
-			}
-			fmt.Fprintf(stderr, "[shrink] %s → %s: phase %s, attempt %d/%d, best: %d bytes, %d steps%s\n",
-				upstream, downstream, p.Phase, p.Attempt, p.MaxAttempts, p.BestLength, p.BestSteps, suffix)
+			log.Info("shrink progress",
+				"upstream", upstream,
+				"downstream", downstream,
+				"phase", p.Phase,
+				"attempt", fmt.Sprintf("%d/%d", p.Attempt, p.MaxAttempts),
+				"best_bytes", p.BestLength,
+				"best_steps", p.BestSteps,
+				"improved", p.Improved,
+			)
 		}
 	}
 
@@ -401,7 +411,7 @@ func svgOutputPath(inputPath string) string {
 	return inputPath + ".svg"
 }
 
-func runCacheRefresh(cmd *cli.Command, env envConfig, stderr io.Writer) error {
+func runCacheRefresh(cmd *cli.Command, env envConfig, log *slog.Logger) error {
 	if cmd.Bool("rebuild") && cmd.Bool("auto") {
 		return fmt.Errorf("--rebuild and --auto are mutually exclusive")
 	}
@@ -431,7 +441,7 @@ func runCacheRefresh(cmd *cli.Command, env envConfig, stderr io.Writer) error {
 	}
 
 	for _, s := range shadows {
-		fmt.Fprintf(stderr, "info: %s/%s shadowed (%s → %s)\n", s.Kind, s.Name, s.Shadowed, s.Winner)
+		log.Info("definition shadowed", "def", s.Kind+"/"+s.Name, "from", s.Shadowed, "to", s.Winner)
 	}
 
 	if err := loader.WriteCache(cache, env.homeDir); err != nil {
@@ -477,11 +487,11 @@ func runCacheStatus(cmd *cli.Command, env envConfig) error {
 	return nil
 }
 
-func runDefinitions(cmd *cli.Command, env envConfig, stderr io.Writer) error {
+func runDefinitions(cmd *cli.Command, env envConfig, log *slog.Logger) error {
 	w := cmd.Root().Writer
 	verbose := cmd.Bool("verbose")
 
-	pathNodes, pathRels, err := loadPathDefs(env, stderr)
+	pathNodes, pathRels, err := loadPathDefs(env, log)
 	if err != nil {
 		return err
 	}
